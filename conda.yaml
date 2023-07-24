@@ -1,0 +1,14 @@
+name: mlp-playground
+
+channels:
+  - conda-forge
+dependencies:
+  - cudatoolkit=11.3
+  - python=3.11
+  - matplotlib=3.5.1
+  - pandas=1.4.2
+  - jax
+  - typer
+  - pip:
+    - jax
+    - -e .
