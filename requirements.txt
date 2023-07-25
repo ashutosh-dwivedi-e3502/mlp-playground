@@ -1,3 +1,8 @@
-"jax[cpu]"
+jax
 flax
 numpy
+optax
+tensorboard
+dm_pix
+flaxmodels
+torchvision
