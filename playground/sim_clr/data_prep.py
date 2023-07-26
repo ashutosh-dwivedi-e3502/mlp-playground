@@ -53,6 +53,7 @@ def augment_image(rng, img):
     img = img * 2.0 - 1.0
     return img
 
+parallel_augment = jax.jit(lambda rng, imgs: jax.vmap(augment_image)(random.split(rng, imgs.shape[0]), imgs))
 
 def get_stl_dataset(dataset_path, size=96):
     contrast_transforms = transforms.Compose([transforms.RandomResizedCrop(size=size),
