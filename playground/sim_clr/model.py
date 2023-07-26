@@ -1,6 +1,6 @@
 import flaxmodels
 import optax
-from jax.numpy import numpy as jnp
+from jax import numpy as jnp
 from flax import linen as nn
 
 class SimCLR(nn.Module):
@@ -9,8 +9,8 @@ class SimCLR(nn.Module):
     
     def setup(self):
         # Base model f(.) - ResNet 18 with last layer being size of 4*hidden_dim
-        self.convnet = flaxmodels.ResNet18(output='activations', 
-                                           pretrained=False, 
+        self.convnet = flaxmodels.ResNet18(output='activations',
+                                           pretrained=False,
                                            normalize=False,
                                            num_classes=4*self.hidden_dim)
         # Network g(.) as MLP with last fc layer of convnet

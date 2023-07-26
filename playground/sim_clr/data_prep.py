@@ -1,12 +1,15 @@
 import dm_pix
 import jax
 import numpy as np
-
-
+import torch
+import torch.utils.data as data
 from jax import numpy as jnp
 from jax import random
 from torchvision import transforms
 from torchvision.datasets import STL10
+
+from . import constants
+
 
 class ContrastiveTransformations(object):
     """Transformations for simclr"""
@@ -21,8 +24,9 @@ class ContrastiveTransformations(object):
 
 def image_to_numpy(img):
     img = np.array(img, dtype=np.float32)
-    img = img / 255.
+    img = img / 255.0
     return img
+
 
 def augment_image(rng, img):
     rngs = random.split(rng, 8)
@@ -30,7 +34,9 @@ def augment_image(rng, img):
     img = dm_pix.random_flip_left_right(rngs[0], img)
     # Color jitter
     img_jt = img
-    img_jt = img_jt * random.uniform(rngs[1], shape=(1,), minval=0.5, maxval=1.5)  # Brightness
+    img_jt = img_jt * random.uniform(
+        rngs[1], shape=(1,), minval=0.5, maxval=1.5
+    )  # Brightness
     img_jt = jax.lax.clamp(0.0, img_jt, 1.0)
     img_jt = dm_pix.random_contrast(rngs[2], img_jt, lower=0.5, upper=1.5)
     img_jt = jax.lax.clamp(0.0, img_jt, 1.0)
@@ -42,10 +48,12 @@ def augment_image(rng, img):
     img = jnp.where(should_jt, img_jt, img)
     # Random grayscale
     should_gs = random.bernoulli(rngs[6], p=0.2)
-    img = jax.lax.cond(should_gs,  # Only apply grayscale if true
-                       lambda x: dm_pix.rgb_to_grayscale(x, keep_dims=True),
-                       lambda x: x,
-                       img)
+    img = jax.lax.cond(
+        should_gs,  # Only apply grayscale if true
+        lambda x: dm_pix.rgb_to_grayscale(x, keep_dims=True),
+        lambda x: x,
+        img,
+    )
     # Gaussian blur
     sigma = random.uniform(rngs[7], shape=(1,), minval=0.1, maxval=2.0)
     img = dm_pix.gaussian_blur(img, sigma=sigma[0], kernel_size=9)
@@ -53,13 +61,58 @@ def augment_image(rng, img):
     img = img * 2.0 - 1.0
     return img
 
-parallel_augment = jax.jit(lambda rng, imgs: jax.vmap(augment_image)(random.split(rng, imgs.shape[0]), imgs))
+
+parallel_augment = jax.jit(
+    lambda rng, imgs: jax.vmap(augment_image)(random.split(rng, imgs.shape[0]), imgs)
+)
+
 
 def get_stl_dataset(dataset_path, size=96):
-    contrast_transforms = transforms.Compose([transforms.RandomResizedCrop(size=size),
-                                          image_to_numpy])
-    unlabeled_data = STL10(root=dataset_path, split='unlabeled', download=True,
-                       transform=ContrastiveTransformations(contrast_transforms, n_views=2))
-    train_data_contrast = STL10(root=dataset_path, split='train', download=True,
-                            transform=ContrastiveTransformations(contrast_transforms, n_views=2))
+    contrast_transforms = transforms.Compose(
+        [transforms.RandomResizedCrop(size=size), image_to_numpy]
+    )
+    unlabeled_data = STL10(
+        root=dataset_path,
+        split="unlabeled",
+        download=True,
+        transform=ContrastiveTransformations(contrast_transforms, n_views=2),
+    )
+    train_data_contrast = STL10(
+        root=dataset_path,
+        split="train",
+        download=True,
+        transform=ContrastiveTransformations(contrast_transforms, n_views=2),
+    )
     return unlabeled_data, train_data_contrast
+
+
+def numpy_collate_contrastive(batch):
+    imgs1, imgs2 = [[b[0][i] for b in batch] for i in range(2)]
+    return np.stack(imgs1 + imgs2, axis=0)
+
+
+def get_data_loaders(dataset_path, batch_size=256):
+    if not dataset_path:
+        dataset_path = constants.DATASET_PATH
+    unlabeled_data, train_data_contrast = get_stl_dataset(dataset_path)
+
+    train_loader = data.DataLoader(
+        unlabeled_data,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
+        collate_fn=numpy_collate_contrastive,
+        num_workers=3,
+        persistent_workers=True,
+        generator=torch.Generator().manual_seed(42),
+    )
+    val_loader = data.DataLoader(
+        train_data_contrast,
+        batch_size=batch_size,
+        shuffle=False,
+        drop_last=False,
+        collate_fn=numpy_collate_contrastive,
+        num_workers=3,
+        persistent_workers=True,
+    )
+    return train_loader, val_loader
