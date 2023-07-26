@@ -129,7 +129,7 @@ class TrainerModule:
         # Train model for one epoch, and log avg metrics
         metrics = defaultdict(float)
         for batch in tqdm(data_loader, desc="Training", leave=False):
-            self.state, batch_metrics = self.mpo(self.state, batch)
+            self.state, batch_metrics = self.train_step(self.state, batch)
             for key in batch_metrics:
                 metrics[key] += batch_metrics[key]
         num_train_steps = len(data_loader)
@@ -173,6 +173,7 @@ class TrainerModule:
                 target=None,
             )
         num_params = sum([np.prod(p.shape) for p in jax.tree_leaves(state_dict)])
+        print(f"number of params = {num_params}")
         self.state = TrainState.create(
             apply_fn=self.state.apply_fn,
             params=state_dict["params"],
