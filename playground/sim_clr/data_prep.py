@@ -91,7 +91,7 @@ def numpy_collate_contrastive(batch):
     return np.stack(imgs1 + imgs2, axis=0)
 
 
-def get_data_loaders(dataset_path, batch_size=256):
+def get_data_loaders(dataset_path=None, batch_size=256):
     if not dataset_path:
         dataset_path = constants.DATASET_PATH
     unlabeled_data, train_data_contrast = get_stl_dataset(dataset_path)

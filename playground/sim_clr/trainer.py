@@ -10,7 +10,7 @@ from jax import random
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from . import data_prep
+from . import data_prep, model, constants
 
 
 class TrainState(train_state.TrainState):
@@ -23,7 +23,6 @@ class TrainState(train_state.TrainState):
 class TrainerModule:
     def __init__(
         self,
-        checkpoint_path: str,
         model_name: str,
         model_class: Any,
         eval_key: str,
@@ -48,7 +47,7 @@ class TrainerModule:
             check_val_every_n_epoch - With which frequency to validate the model
         """
         super().__init__()
-        self.checkpoint_path = checkpoint_path
+        self.checkpoint_path = constants.CHECKPOINT_PATH
         self.lr = lr
         self.weight_decay = weight_decay
         self.seed = seed
@@ -194,7 +193,7 @@ class TrainerModule:
 class SimCLRTrainer(TrainerModule):
     def __init__(self, **kwargs):
         super().__init__(
-            model_name="SimCLR", model_class=None, eval_key="acc_top5", **kwargs
+            model_name="SimCLR", model_class=model.SimCLR, eval_key="acc_top5", **kwargs
         )
 
     def create_functions(self):
