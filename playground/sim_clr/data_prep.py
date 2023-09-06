@@ -12,9 +12,20 @@ from . import constants
 
 
 class ContrastiveTransformations(object):
-    """Transformations for simclr"""
+    """Transformations for simclr
+
+        To allow efficient training, we need to prepare the data loading such that we sample two different, 
+        random augmentations for each image in the batch. 
+        The easiest way to do this is by creating a transformation that, when being called, 
+        applies a set of data augmentations to an image twice.
+    
+    """
 
     def __init__(self, base_transforms, n_views=2):
+        """
+        :param base_transforms: torch vision transforms to be applied. (random resized crop in this case)
+        :param n_views: number of images to return after the transform. (tranform will be applied that number of times)
+        """
         self.base_transforms = base_transforms
         self.n_views = n_views
 
@@ -29,6 +40,17 @@ def image_to_numpy(img):
 
 
 def augment_image(rng, img):
+    """
+    Used at the time of training / computing loss
+
+    Augments a single image and applies a random horizontal flip, color jitter 
+    (brightness, contrast, saturation, and hue), 
+    random grayscaling, and gaussian blur. 
+
+    Since these are operations with stochaticity/randomness, 
+    we also pass a random seed with it that we can split for each operation.
+    """
+
     rngs = random.split(rng, 8)
     # Random left-right flip
     img = dm_pix.random_flip_left_right(rngs[0], img)
