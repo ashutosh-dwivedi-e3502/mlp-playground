@@ -1,3 +1,3 @@
 import os
 
-BASE_DIR = os.path.abspath(os.pardir)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))

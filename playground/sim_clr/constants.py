@@ -1,6 +1,6 @@
 import os
 
-from .. import settings
+import settings
 
 BASE_DIR = os.path.pardir
 DATASET_PATH = os.path.join(settings.BASE_DIR, "data")
