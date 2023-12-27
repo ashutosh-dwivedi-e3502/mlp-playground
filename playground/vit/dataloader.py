@@ -14,7 +14,7 @@ def get_dataloader(train:bool, transform:nn.Module, batch_size):
         download=True,
         transform=transform,
     )
-    trainloader = torch.utils.data.DataLoader(
+    return torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, shuffle=True, drop_last=True
     )
 
