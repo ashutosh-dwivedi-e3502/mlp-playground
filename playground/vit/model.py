@@ -4,7 +4,6 @@ import jax
 import jax.random as jr
 import jax.numpy as jnp
 
-from equinox import nueral
 from jax.random import PRNGKeyArray
 from jaxtyping import Array, Float
 from vit import util
@@ -17,14 +16,14 @@ class PatchEmbedding(eqx.Module):
     def __init__(
         self,
         input_channels: int,
-        output_shape: int,
+        embedding_dim: int,
         patch_size: int,
         key: PRNGKeyArray,
     ):
         self.patch_size = patch_size
         self.linear = eqx.nn.Linear(
             self.patch_size**2 * input_channels,
-            output_shape,
+            embedding_dim,
             key=key,
         )
 
@@ -38,7 +37,6 @@ class PatchEmbedding(eqx.Module):
             pw=self.patch_size,
         )
         x = jax.vmap(self.linear)(x)
-
         return x
 
 
@@ -77,6 +75,8 @@ class AttentionBlock(eqx.Module):
         key: PRNGKeyArray,
     ) -> Float[Array, "num_patches embedding_dim"]:
         input_x = jax.vmap(self.layer_norm1)(x)
+
+        # attention is inherently batch operation so no need of vmap
         x = x + self.attention(input_x, input_x, input_x)
 
         input_x = jax.vmap(self.layer_norm2)(x)
@@ -90,5 +90,78 @@ class AttentionBlock(eqx.Module):
         input_x = self.dropout2(input_x, inference=not enable_dropout, key=key2)
 
         x = x + input_x
+        return x
 
+class VisionTransformer(eqx.Module):
+    patch_embedding: PatchEmbedding
+    positional_embedding: jnp.ndarray
+    cls_token: jnp.ndarray
+    attention_blocks: list[AttentionBlock]
+    dropout: eqx.nn.Dropout
+    mlp: eqx.nn.Sequential
+    num_layers: int
+
+    def __init__(
+        self,
+        embedding_dim: int,
+        channels: int,
+        hidden_dim: int,
+        num_heads: int,
+        num_layers: int,
+        dropout_rate: float,
+        patch_size: int,
+        num_patches: int,
+        num_classes: int,
+        key: PRNGKeyArray,
+    ):
+        key1, key2, key3, key4, key5 = jr.split(key, 5)
+
+        # ?? are channels to be flattened?
+        self.patch_embedding = PatchEmbedding(channels, embedding_dim, patch_size, key1)
+
+        # ?? why num patches + 1?
+        self.positional_embedding = jr.normal(key2, (num_patches + 1, embedding_dim))
+
+        # embedding for the CLS token
+        self.cls_token = jr.normal(key3, (1, embedding_dim))
+
+        self.num_layers = num_layers
+
+        self.attention_blocks = [
+            AttentionBlock(embedding_dim, hidden_dim, num_heads, dropout_rate, key4)
+            for _ in range(self.num_layers)
+        ]
+
+        self.dropout = eqx.nn.Dropout(dropout_rate)
+
+        self.mlp = eqx.nn.Sequential(
+            [
+                eqx.nn.LayerNorm(embedding_dim),
+                eqx.nn.Linear(embedding_dim, num_classes, key=key5),
+            ]
+        )
+
+    def __call__(
+        self,
+        x: Float[Array, "channels height width"],
+        enable_dropout: bool,
+        key: PRNGKeyArray,
+    ) -> Float[Array, "num_classes"]:
+        x = self.patch_embedding(x)
+
+        x = jnp.concatenate((self.cls_token, x), axis=0)
+
+        x += self.positional_embedding[
+            : x.shape[0]
+        ]  # Slice to the same length as x, as the positional embedding may be longer.
+
+        dropout_key, *attention_keys = jr.split(key, num=self.num_layers + 1)
+
+        x = self.dropout(x, inference=not enable_dropout, key=dropout_key)
+
+        for block, attention_key in zip(self.attention_blocks, attention_keys):
+            x = block(x, enable_dropout, key=attention_key)
+
+        x = x[0]  # Select the CLS token.
+        x = self.mlp(x)
         return x
