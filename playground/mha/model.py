@@ -12,7 +12,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 def scaled_dot_product(q, k, v, mask=None):
     d_k = q.shape[-1]
     attn_logits = jnp.matmul(q, jnp.swapaxes(k, -2, -1))
-    # attn_logits = jnp.matmul(q, einops.rearrange(k, "... heads dims -> ... dims heads"))
+    # attn_logits = jnp.matmul(q, einops.rearrange(k, "... seq_len dims -> ... dims seq_len"))
     attn_logits = attn_logits / math.sqrt(d_k)
     if mask is not None:
         attn_logits = jnp.where(mask == 0, -9e15, attn_logits)
@@ -36,7 +36,7 @@ class MultiHeadAttention(eqx.Module):
     qkv_proj: eqx.nn.Linear
     output_proj: eqx.nn.Linear
 
-    def __init__(self, embed_dim: int, num_heads: int, key=PRNGKeyArray):
+    def __init__(self, embed_dim: int, num_heads: int, key:PRNGKeyArray):
         self.embed_dim = embed_dim
         self.num_heads = num_heads
 
@@ -101,3 +101,52 @@ class MultiHeadAttention(eqx.Module):
             b=batch_size
         )
         return output_embeddings, attention
+
+
+class EncoderBlock(eqx.Module):
+    linear1: eqx.nn.Linear
+    linear2: eqx.nn.Linear
+    norm1: eqx.nn.LayerNorm
+    norm2: eqx.nn.LayerNorm
+    dropout: eqx.nn.Dropout    
+
+    input_dim: int
+    num_heads: int
+    dim_feedforward: int
+    dropout_prob: float
+
+    self_attn: MultiHeadAttention
+
+    def __init__(self, input_dim:int, num_heads: int, dim_feedforward: int, dropout_prob: float, key:PRNGKeyArray):
+        self.input_dim = input_dim
+        self.num_heads = num_heads
+        self.dim_feedforward = dim_feedforward
+        self.dropout_prob = dropout_prob
+
+        key_attn, key_lin1, key_lin2 = jr.split(key, 3)
+
+        self.self_attn = MultiHeadAttention(embed_dim=self.input_dim, num_heads=self.num_heads, key=key_attn)
+
+        self.linear1 = nn.Linear(in_features=self.input_dim, out_features=self.dim_feedforward, use_bias=True, key=key_lin1)
+        self.linear2 = nn.Linear(in_features=self.dim_feedforward, out_features=self.input_dim, use_bias=True, key=key_lin2)
+        self.norm1 = nn.LayerNorm(shape=self.dim_feedforward)
+        self.norm2 = nn.LayerNorm(shape=self.input_dim)
+        self.dropout = nn.Dropout(p=dropout_prob)
+
+
+    def __call__(self, x, key:PRNGKeyArray, mask=None, train=True):
+        dropout_key = jr.split(key, 1)
+
+        attn_out, _ = self.self_attn(x, mask=mask)
+        x = x + self.dropout(attn_out, inference=not train, key=dropout_key)
+        x = jax.vmap(self.norm1)(x)
+
+        mlp_out = x # keep a copy of x for residual connection
+        mlp_out = jax.vmap(self.linear1)(mlp_out)
+        mlp_out = self.dropout(mlp_out, key=dropout_key)
+        mlp_out = jax.nn.relu(mlp_out)
+        mlp_out = jax.vmap(self.linear2)(mlp_out)
+
+        x = x + self.dropout(mlp_out, inference=not train, key=dropout_key)
+        x = jax.vmap(self.norm2)(x)
+        return x

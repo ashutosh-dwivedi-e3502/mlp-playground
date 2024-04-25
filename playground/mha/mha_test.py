@@ -1,9 +1,10 @@
 import unittest
 
-from jax import random 
+from jax import random
 
 # from playground.mha import model
 from . import model
+
 
 class TestMHA(unittest.TestCase):
     def setUp(self) -> None:
@@ -23,19 +24,33 @@ class TestMHA(unittest.TestCase):
         print("Attention\n", attention)
         assert values.shape == (3, 2), f"{values.shape=}"
         assert attention.shape == (3, 3), f"{attention.shape=}"
-    
-    
+
     def test_mha(self):
         main_rng, x_rng = random.split(self.main_rng)
         # Create attention
         mh_attn = model.MultiHeadAttention(embed_dim=128, num_heads=4, key=main_rng)
-        # create random input 
+        # create random input
         x = random.normal(x_rng, (3, 16, 128))
         output, attention = mh_attn(x)
 
         assert output.shape == (3, 16, 128), f"{output.shape}"
         assert attention.shape == (3, 4, 16, 16), f"{attention.shape}"
 
+    def test_attention_block(self):
+        ## Test EncoderBlock implementation
+        # Example features as input
+        main_rng, x_rng = random.split(self.main_rng)
+        x = random.normal(x_rng, (3, 16, 128))
+        # Create encoder block
+        encblock = model.EncoderBlock(
+            input_dim=128, num_heads=4, dim_feedforward=512, dropout_prob=0.1, key=self.main_rng
+        )
+        # Initialize parameters of encoder block with random key and inputs
+        main_rng, init_rng, dropout_rng = random.split(main_rng, 3)
+        # Apply encoder block with parameters on the inputs
+        out = encblock(x, dropout_rng)
+        out.shape == (3, 16, 128)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
