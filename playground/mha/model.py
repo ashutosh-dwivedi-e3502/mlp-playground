@@ -150,3 +150,23 @@ class EncoderBlock(eqx.Module):
         x = x + self.dropout(mlp_out, inference=not train, key=dropout_key)
         x = jax.vmap(self.norm2)(x)
         return x
+
+class TransformerEncoder(eqx.Module):
+    num_layers: int
+    input_dim: int
+    num_heads: int
+    dim_feedforward: int
+    dropout_prob: float
+
+    def __init__(self, num_layers:int, input_dim:int, num_heads:int, dim_feedforward: int, dropout_prob, key: PRNGKeyArray):
+        self.num_layers = num_layers
+        self.input_dim = input_dim
+        self.num_heads = num_heads
+        self.dim_feedforward = dim_feedforward
+        self.dropout_prob = dropout_prob
+        self.layers = [EncoderBlock(input_dim, num_heads, dim_feedforward, dropout_prob, key) for _ in range(num_layers)]
+
+    def __call__(self, x, key: PRNGKeyArray, mask=None, train=True):
+        for l in self.layers:
+            x = jax.vmap(l)(x, key, mask, train)
+        return x
