@@ -31,7 +31,7 @@ class TestMHA(unittest.TestCase):
         # Create attention
         mh_attn = model.MultiHeadAttention(embed_dim=128, num_heads=4, key=main_rng)
         # create random input
-        x = random.normal(x_rng, (3, 16, 128))
+        x = random.normal(x_rng, (16, 128))
         output, attention = mh_attn(x)
 
         assert output.shape == (3, 16, 128), f"{output.shape}"

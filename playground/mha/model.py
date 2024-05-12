@@ -30,6 +30,7 @@ def expand_mask(mask):
 
 
 class MultiHeadAttention(eqx.Module):
+    """Given initial embeddings, get q k v, apply attention, and output projection"""
     embed_dim: int
     num_heads: int
     qkv_proj: eqx.nn.Linear
@@ -41,7 +42,7 @@ class MultiHeadAttention(eqx.Module):
 
         key_qkv, key_proj = jr.split(key, 2)
 
-        # TODO: is bias initialization and kernel init with xavier important?
+        # TODO: is bias initialization and kernel init with xavier required?
         qkv_out_size = 3 * self.embed_dim
         self.qkv_proj = nn.Linear(
             in_features=self.embed_dim,
@@ -62,10 +63,7 @@ class MultiHeadAttention(eqx.Module):
             mask = expand_mask(mask)
 
         # a single projection layer, given the input produces Q, K, V matrices
-        reshaped_x = einops.rearrange(
-            x, "batch_size seq_len embedding_dim -> (batch_size seq_len) embedding_dim"
-        )
-        qkv = jax.vmap(self.qkv_proj)(reshaped_x)
+        qkv = jax.vmap(self.qkv_proj)(x)
 
         # The scaled dot product attention allows a network to attend over a sequence.
         # However, often there are multiple different aspects a sequence element
@@ -76,39 +74,33 @@ class MultiHeadAttention(eqx.Module):
         # sub-keys, and sub-values, which we pass through the scaled dot product attention independently.
         # Afterward, we concatenate the heads and combine them with a final weight matrix
 
-        # h = number of heads
-        # d = embedding dims
-        # qkv matrix is of the size (batch_size  * seq_len, 3 * embedding_dims)
-
+        # split the embeding_dim into multiple heads
+        # dim here is different from embed_dim, it's 3 * embed_dims
         reshaped_qkv = einops.rearrange(
             qkv,
-            "(b s) (h d) -> h s d",
-            s=seq_len,
-            b=batch_size,
-            h=self.num_heads,
+            "seq_len (num_heads d) -> (seq_len num_heads) d",
+            seq_len=seq_len,
+            num_heads=self.num_heads,
         )
-        print(f"{reshaped_qkv.shape=}")
         # embedding dims contains all of qkv, so split
         q, k, v = jnp.array_split(reshaped_qkv, 3, axis=-1)
-        print(f"{q.shape=}")
         values, attention = scaled_dot_product(q, k, v, mask=mask)
-        print(f"{values.shape=}, {attention.shape=}")
-        output_embeddings = jax.vmap(self.output_proj)(
-            einops.rearrange(values, "b h s d -> (b s) (h d)")
+        values = einops.rearrange(
+            values,
+            "(num_heads seq_len) d -> seq_len (num_heads d)",
+            num_heads=self.num_heads,
+            seq_len=seq_len,
         )
-        # combine the heads dim seperate out seq len and batch dim
-        output_embeddings = einops.rearrange(
-            output_embeddings, "(b s) d -> b s d", s=seq_len, b=batch_size
-        )
-        print(f"{output_embeddings.shape=}")
+        output_embeddings = jax.vmap(self.output_proj)(values)
         return output_embeddings, attention
 
 
 class EncoderBlock(eqx.Module):
     """
-    This FF block, which accepts the embeddings and returns the output 
+    This FF block, which accepts the embeddings and returns the output
     after passing them through a linear layers with droptouts
     """
+
     linear1: eqx.nn.Linear
     linear2: eqx.nn.Linear
     norm1: eqx.nn.LayerNorm
