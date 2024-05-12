@@ -11,8 +11,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 
 def scaled_dot_product(q, k, v, mask=None):
     d_k = q.shape[-1]
-    attn_logits = jnp.matmul(q, jnp.swapaxes(k, -2, -1))
-    # attn_logits = jnp.matmul(q, einops.rearrange(k, "... seq_len dims -> ... dims seq_len"))
+    attn_logits = jnp.matmul(q, einops.rearrange(k, "seq_len dims -> dims seq_len"))
     attn_logits = attn_logits / math.sqrt(d_k)
     if mask is not None:
         attn_logits = jnp.where(mask == 0, -9e15, attn_logits)
@@ -36,7 +35,7 @@ class MultiHeadAttention(eqx.Module):
     qkv_proj: eqx.nn.Linear
     output_proj: eqx.nn.Linear
 
-    def __init__(self, embed_dim: int, num_heads: int, key:PRNGKeyArray):
+    def __init__(self, embed_dim: int, num_heads: int, key: PRNGKeyArray):
         self.embed_dim = embed_dim
         self.num_heads = num_heads
 
@@ -57,13 +56,10 @@ class MultiHeadAttention(eqx.Module):
             key=key_proj,
         )
 
-    def __call__(self, x: Float[Array, "batch_size seq_len embed_dim"], mask=None):
-        batch_size, seq_len, embed_dim = x.shape
+    def __call__(self, x: Float[Array, "seq_len embed_dim"], mask=None):
+        seq_len, embed_dim = x.shape
         if mask is not None:
             mask = expand_mask(mask)
-
-        print(f"{batch_size=}")
-        print(f"{seq_len=}")
 
         # a single projection layer, given the input produces Q, K, V matrices
         reshaped_x = einops.rearrange(
@@ -80,35 +76,44 @@ class MultiHeadAttention(eqx.Module):
         # sub-keys, and sub-values, which we pass through the scaled dot product attention independently.
         # Afterward, we concatenate the heads and combine them with a final weight matrix
 
+        # h = number of heads
+        # d = embedding dims
+        # qkv matrix is of the size (batch_size  * seq_len, 3 * embedding_dims)
+
         reshaped_qkv = einops.rearrange(
             qkv,
-            "(b s) (h d) -> b h s d",
+            "(b s) (h d) -> h s d",
             s=seq_len,
             b=batch_size,
             h=self.num_heads,
         )
+        print(f"{reshaped_qkv.shape=}")
         # embedding dims contains all of qkv, so split
         q, k, v = jnp.array_split(reshaped_qkv, 3, axis=-1)
+        print(f"{q.shape=}")
         values, attention = scaled_dot_product(q, k, v, mask=mask)
+        print(f"{values.shape=}, {attention.shape=}")
         output_embeddings = jax.vmap(self.output_proj)(
             einops.rearrange(values, "b h s d -> (b s) (h d)")
         )
         # combine the heads dim seperate out seq len and batch dim
         output_embeddings = einops.rearrange(
-            output_embeddings,
-            "(b s) d -> b s d",
-            s=seq_len,
-            b=batch_size
+            output_embeddings, "(b s) d -> b s d", s=seq_len, b=batch_size
         )
+        print(f"{output_embeddings.shape=}")
         return output_embeddings, attention
 
 
 class EncoderBlock(eqx.Module):
+    """
+    This FF block, which accepts the embeddings and returns the output 
+    after passing them through a linear layers with droptouts
+    """
     linear1: eqx.nn.Linear
     linear2: eqx.nn.Linear
     norm1: eqx.nn.LayerNorm
     norm2: eqx.nn.LayerNorm
-    dropout: eqx.nn.Dropout    
+    dropout: eqx.nn.Dropout
 
     input_dim: int
     num_heads: int
@@ -117,7 +122,14 @@ class EncoderBlock(eqx.Module):
 
     self_attn: MultiHeadAttention
 
-    def __init__(self, input_dim:int, num_heads: int, dim_feedforward: int, dropout_prob: float, key:PRNGKeyArray):
+    def __init__(
+        self,
+        input_dim: int,
+        num_heads: int,
+        dim_feedforward: int,
+        dropout_prob: float,
+        key: PRNGKeyArray,
+    ):
         self.input_dim = input_dim
         self.num_heads = num_heads
         self.dim_feedforward = dim_feedforward
@@ -125,23 +137,42 @@ class EncoderBlock(eqx.Module):
 
         key_attn, key_lin1, key_lin2 = jr.split(key, 3)
 
-        self.self_attn = MultiHeadAttention(embed_dim=self.input_dim, num_heads=self.num_heads, key=key_attn)
+        self.norm1 = nn.LayerNorm(self.input_dim)
 
-        self.linear1 = nn.Linear(in_features=self.input_dim, out_features=self.dim_feedforward, use_bias=True, key=key_lin1)
-        self.linear2 = nn.Linear(in_features=self.dim_feedforward, out_features=self.input_dim, use_bias=True, key=key_lin2)
-        self.norm1 = nn.LayerNorm(shape=self.dim_feedforward)
+        self.self_attn = MultiHeadAttention(
+            embed_dim=self.input_dim, num_heads=self.num_heads, key=key_attn
+        )
+
+        self.linear1 = nn.Linear(
+            in_features=self.input_dim,
+            out_features=self.dim_feedforward,
+            use_bias=True,
+            key=key_lin1,
+        )
+        self.linear2 = nn.Linear(
+            in_features=self.dim_feedforward,
+            out_features=self.input_dim,
+            use_bias=True,
+            key=key_lin2,
+        )
         self.norm2 = nn.LayerNorm(shape=self.input_dim)
         self.dropout = nn.Dropout(p=dropout_prob)
 
-
-    def __call__(self, x, key:PRNGKeyArray, mask=None, train=True):
+    def __call__(
+        self,
+        x: Float[Array, "seq_len embed_dim"],
+        key: PRNGKeyArray,
+        mask=None,
+        train=True,
+    ):
         dropout_key = jr.split(key, 1)
 
         attn_out, _ = self.self_attn(x, mask=mask)
         x = x + self.dropout(attn_out, inference=not train, key=dropout_key)
         x = jax.vmap(self.norm1)(x)
 
-        mlp_out = x # keep a copy of x for residual connection
+        mlp_out = x  # keep a copy of x for residual connection
+        print(f"{mlp_out.shape=}")
         mlp_out = jax.vmap(self.linear1)(mlp_out)
         mlp_out = self.dropout(mlp_out, key=dropout_key)
         mlp_out = jax.nn.relu(mlp_out)
@@ -151,6 +182,7 @@ class EncoderBlock(eqx.Module):
         x = jax.vmap(self.norm2)(x)
         return x
 
+
 class TransformerEncoder(eqx.Module):
     num_layers: int
     input_dim: int
@@ -158,15 +190,26 @@ class TransformerEncoder(eqx.Module):
     dim_feedforward: int
     dropout_prob: float
 
-    def __init__(self, num_layers:int, input_dim:int, num_heads:int, dim_feedforward: int, dropout_prob, key: PRNGKeyArray):
+    def __init__(
+        self,
+        num_layers: int,
+        input_dim: int,
+        num_heads: int,
+        dim_feedforward: int,
+        dropout_prob,
+        key: PRNGKeyArray,
+    ):
         self.num_layers = num_layers
         self.input_dim = input_dim
         self.num_heads = num_heads
         self.dim_feedforward = dim_feedforward
         self.dropout_prob = dropout_prob
-        self.layers = [EncoderBlock(input_dim, num_heads, dim_feedforward, dropout_prob, key) for _ in range(num_layers)]
+        self.encoders = [
+            EncoderBlock(input_dim, num_heads, dim_feedforward, dropout_prob, key)
+            for _ in range(num_layers)
+        ]
 
     def __call__(self, x, key: PRNGKeyArray, mask=None, train=True):
-        for l in self.layers:
+        for l in self.encoders:
             x = jax.vmap(l)(x, key, mask, train)
         return x

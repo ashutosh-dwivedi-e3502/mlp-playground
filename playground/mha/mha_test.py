@@ -1,4 +1,5 @@
 import unittest
+import jax
 
 from jax import random
 
@@ -40,15 +41,20 @@ class TestMHA(unittest.TestCase):
         ## Test EncoderBlock implementation
         # Example features as input
         main_rng, x_rng = random.split(self.main_rng)
-        x = random.normal(x_rng, (3, 16, 128))
+        x = random.normal(x_rng, (16, 128))
         # Create encoder block
-        encblock = model.EncoderBlock( input_dim=128, num_heads=4, dim_feedforward=512, dropout_prob=0.1, key=self.main_rng
+        encblock = model.EncoderBlock(
+            input_dim=128,
+            num_heads=4,
+            dim_feedforward=512,
+            dropout_prob=0.1,
+            key=self.main_rng,
         )
         # Initialize parameters of encoder block with random key and inputs
         main_rng, init_rng, dropout_rng = random.split(main_rng, 3)
-        # Apply encoder block with parameters on the inp`uts
+        # Apply encoder block with parameters on the inputs
         out = encblock(x, dropout_rng)
-        out.shape == (3, 16, 128)
+        assert out.shape == (16, 128)
 
     def test_transformer_encoder(self):
         main_rng, x_rng = random.split(self.main_rng)
@@ -56,17 +62,18 @@ class TestMHA(unittest.TestCase):
 
         # Create Transformer encoder
         main_rng, init_rng, dropout_init_rng = random.split(main_rng, 3)
-        transfomer_encoder = model.TransformerEncoder(num_layers=5,
-                                    input_dim=128,
-                                    num_heads=4,
-                                    dim_feedforward=256,
-                                    dropout_prob=0.15
-                                    key=init_rng)
+        transfomer_encoder = model.TransformerEncoder(
+            num_layers=5,
+            input_dim=128,
+            num_heads=4,
+            dim_feedforward=256,
+            dropout_prob=0.15,
+            key=init_rng,
+        )
         # Initialize parameters of transformer with random key and inputs
         out = transfomer_encoder(x, dropout_init_rng)
         out_inference = transfomer_encoder(x, dropout_init_rng, train=False)
         print(out.shape)
-
 
 
 if __name__ == "__main__":
