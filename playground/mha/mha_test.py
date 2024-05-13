@@ -18,11 +18,6 @@ class TestMHA(unittest.TestCase):
         qkv = random.normal(rand1, (3, seq_len, d_k))
         q, k, v = qkv[0], qkv[1], qkv[2]
         values, attention = model.scaled_dot_product(q, k, v)
-        print("Q\n", q)
-        print("K\n", k)
-        print("V\n", v)
-        print("Values\n", values)
-        print("Attention\n", attention)
         assert values.shape == (3, 2), f"{values.shape=}"
         assert attention.shape == (3, 3), f"{attention.shape=}"
 
@@ -34,10 +29,10 @@ class TestMHA(unittest.TestCase):
         x = random.normal(x_rng, (16, 128))
         output, attention = mh_attn(x)
 
-        assert output.shape == (3, 16, 128), f"{output.shape}"
-        assert attention.shape == (3, 4, 16, 16), f"{attention.shape}"
+        assert output.shape == (16, 128), f"{output.shape}"
+        assert attention.shape == (4, 16, 16), f"{attention.shape}"
 
-    def test_attention_block(self):
+    def test_encoder_block(self):
         ## Test EncoderBlock implementation
         # Example features as input
         main_rng, x_rng = random.split(self.main_rng)
@@ -58,7 +53,7 @@ class TestMHA(unittest.TestCase):
 
     def test_transformer_encoder(self):
         main_rng, x_rng = random.split(self.main_rng)
-        x = random.normal(x_rng, (3, 16, 128))
+        x = random.normal(x_rng, (16, 128))
 
         # Create Transformer encoder
         main_rng, init_rng, dropout_init_rng = random.split(main_rng, 3)
@@ -73,7 +68,6 @@ class TestMHA(unittest.TestCase):
         # Initialize parameters of transformer with random key and inputs
         out = transfomer_encoder(x, dropout_init_rng)
         out_inference = transfomer_encoder(x, dropout_init_rng, train=False)
-        print(out.shape)
 
 
 if __name__ == "__main__":

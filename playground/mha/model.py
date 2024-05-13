@@ -1,5 +1,6 @@
 import equinox as eqx
 import einops
+import functools
 import jax
 import math
 
@@ -7,11 +8,14 @@ from equinox import nn
 from jax import random as jr
 from jax import numpy as jnp
 from jaxtyping import Array, Float, PRNGKeyArray
+from typing import List
 
 
 def scaled_dot_product(q, k, v, mask=None):
     d_k = q.shape[-1]
-    attn_logits = jnp.matmul(q, einops.rearrange(k, "seq_len dims -> dims seq_len"))
+    attn_logits = jnp.matmul(
+        q, einops.rearrange(k, "... seq_len dims -> ... dims seq_len")
+    )
     attn_logits = attn_logits / math.sqrt(d_k)
     if mask is not None:
         attn_logits = jnp.where(mask == 0, -9e15, attn_logits)
@@ -31,6 +35,7 @@ def expand_mask(mask):
 
 class MultiHeadAttention(eqx.Module):
     """Given initial embeddings, get q k v, apply attention, and output projection"""
+
     embed_dim: int
     num_heads: int
     qkv_proj: eqx.nn.Linear
@@ -78,7 +83,7 @@ class MultiHeadAttention(eqx.Module):
         # dim here is different from embed_dim, it's 3 * embed_dims
         reshaped_qkv = einops.rearrange(
             qkv,
-            "seq_len (num_heads d) -> (seq_len num_heads) d",
+            "seq_len (num_heads d) -> num_heads seq_len d",
             seq_len=seq_len,
             num_heads=self.num_heads,
         )
@@ -87,7 +92,7 @@ class MultiHeadAttention(eqx.Module):
         values, attention = scaled_dot_product(q, k, v, mask=mask)
         values = einops.rearrange(
             values,
-            "(num_heads seq_len) d -> seq_len (num_heads d)",
+            "num_heads seq_len d -> seq_len (num_heads d)",
             num_heads=self.num_heads,
             seq_len=seq_len,
         )
@@ -98,7 +103,7 @@ class MultiHeadAttention(eqx.Module):
 class EncoderBlock(eqx.Module):
     """
     This FF block, which accepts the embeddings and returns the output
-    after passing them through a linear layers with droptouts
+    after passing them through a linear layers with dropouts
     """
 
     linear1: eqx.nn.Linear
@@ -164,7 +169,6 @@ class EncoderBlock(eqx.Module):
         x = jax.vmap(self.norm1)(x)
 
         mlp_out = x  # keep a copy of x for residual connection
-        print(f"{mlp_out.shape=}")
         mlp_out = jax.vmap(self.linear1)(mlp_out)
         mlp_out = self.dropout(mlp_out, key=dropout_key)
         mlp_out = jax.nn.relu(mlp_out)
@@ -181,6 +185,7 @@ class TransformerEncoder(eqx.Module):
     num_heads: int
     dim_feedforward: int
     dropout_prob: float
+    encoders: List[EncoderBlock]
 
     def __init__(
         self,
@@ -201,7 +206,8 @@ class TransformerEncoder(eqx.Module):
             for _ in range(num_layers)
         ]
 
-    def __call__(self, x, key: PRNGKeyArray, mask=None, train=True):
+    def __call__(self, x:Float[Array, "seq_len dim"], key: PRNGKeyArray, mask=None, train=True):
         for l in self.encoders:
-            x = jax.vmap(l)(x, key, mask, train)
+            layer_partial = functools.partial(l, key=key, mask=mask, train=train)
+            layer_partial(x)
         return x
