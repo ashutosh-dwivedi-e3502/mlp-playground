@@ -69,6 +69,29 @@ class TestMHA(unittest.TestCase):
         out = transfomer_encoder(x, dropout_init_rng)
         out_inference = transfomer_encoder(x, dropout_init_rng, train=False)
 
+    def test_transformer_predictor(self):
+        main_rng, x_rng = random.split(self.main_rng)
+
+        input_dim = 64
+        x = random.normal(x_rng, (16, input_dim))
+
+        transformer_predictor = model.TransformerPredictor(
+            num_layers=5,
+            input_dim=input_dim,
+            model_dim=128,
+            num_classes=9,
+            num_heads=4,
+            dropout_prob = 0.15,
+            input_dropout_prob = 0.05,
+            key=main_rng
+        )
+        out = transformer_predictor(x, train=True, key=main_rng)
+        # attention_maps = transformer_predictor.get_attention_maps(x, train=True)
+        print(f"{out.shape=}")
+        # print(f"{attention_maps=}")
+
+
+
 
 if __name__ == "__main__":
     unittest.main()
