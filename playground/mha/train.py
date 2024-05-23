@@ -8,7 +8,7 @@ from jax import numpy as jnp
 from jax import random as jr
 
 
-@eqx.filter_value_and_grad
+@eqx.filter_value_and_grad(has_aux=True)
 def compute_grads(model: eqx.Module, inputs: jnp.ndarray, labels: jnp.ndarray, keys):
     logits = jax.vmap(model, in_axes=(0, None, None, None, 0))(
         inputs, None, True, True, keys
