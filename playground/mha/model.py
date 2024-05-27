@@ -211,7 +211,7 @@ class TransformerEncoder(eqx.Module):
     ):
         for l in self.encoders:
             layer_partial = functools.partial(l, key=key, mask=mask, train=train)
-            layer_partial(x)
+            x = layer_partial(x)
         return x
 
     def get_attention_maps(self, x, mask=None, train=True):
