@@ -87,11 +87,11 @@ class VerticalStackConvolution(eqx.Module):
         self.kernel_size = kernel_size
         mask = jnp.ones((self.kernel_size, self.kernel_size), dtype=jnp.float32)
         # Mask out all pixels below the center row
-        mask.at[self.kernel_size // 2 + 1:, :].set(0)
+        mask = mask.at[self.kernel_size // 2 + 1:, :].set(0)
         # Optionally mask out the center row
         if self.mask_center:
-            mask.at[self.kernel_size // 2, :].set(0)
-
+            mask = mask.at[self.kernel_size // 2, :].set(0)
+                
         # Initialize the MaskedConv module
         self.conv = MaskedConv(
             in_channels=self.in_channels,
@@ -101,7 +101,7 @@ class VerticalStackConvolution(eqx.Module):
             key=key
         )
 
-    def __call__(self, x: Float[Array, "batch h w c_in"]) -> Float[Array, "batch h w c_out"]:
+    def __call__(self, x: Float[Array, "c_in h w"]) -> Float[Array, "c_out h w"]:
         return self.conv(x)
 
 
