@@ -22,6 +22,7 @@ def plot_receptive_field(img_grads):
     """
     # Plot receptive field
     fig, ax = plt.subplots(1, 2)
+    print(img_grads)
     pos = ax[0].imshow(img_grads)
     fig.colorbar(pos, ax=ax[0])
     ax[1].imshow(img_grads > 0)
@@ -42,6 +43,33 @@ def plot_receptive_field(img_grads):
     plt.show()
     plt.close()
 
+def get_center_pixel(output):
+    """
+    Get the value of the center pixel in the output.
+    Args:
+        output: The output of the model with shape (out_channels, height, width).
+    Returns:
+        The value of the center pixel.
+    """
+    h_center = output.shape[1] // 2
+    w_center = output.shape[2] // 2
+    return output[:, h_center, w_center].sum()
+
+
+def get_image_grad(fn, image):
+    """
+    Computes the gradient of the output given by the fn w.r.t the input image.    
+    """
+    # Compute gradients of the output center pixel w.r.t the input
+    grad_fn = jax.grad(fn)
+    img_grads = jnp.abs(grad_fn(image))
+    img_grads = jax.device_get(img_grads)
+
+    # Since img_grads has shape (in_channels, height, width), sum over channels
+    img_grads = img_grads.sum(axis=0)  # Now shape is (height, width)    
+    print(f"After summing over channels: {img_grads.shape=}")
+    return img_grads
+
 def compute_receptive_field_gradients(model, input_shape):
     """
     Computes gradients showing the receptive field of the center pixel.
@@ -57,25 +85,11 @@ def compute_receptive_field_gradients(model, input_shape):
     # Function to apply the model and get the output value at the center pixel
     def apply_fn(x):
         output = model(x)
-        # Assuming output shape is (out_channels, height, width)
-        # Sum over channels to get a scalar output
-        h_center = output.shape[1] // 2
-        w_center = output.shape[2] // 2
-        return output[:, h_center, w_center].sum()
+        return get_center_pixel(output)
 
-    # Compute gradients of the output center pixel w.r.t the input
-    print(f"{img.shape=}")
-    grad_fn = jax.grad(apply_fn)
-    img_grads = jnp.abs(grad_fn(img))
-    print(f"{img_grads.shape=}")
-    img_grads = jax.device_get(img_grads)
+    return get_image_grad(apply_fn, img)
+    
 
-    # Since img_grads has shape (in_channels, height, width), sum over channels
-    img_grads = img_grads.sum(axis=0)  # Now shape is (height, width)    
-    print(f"After summing over channels: {img_grads.shape=}")
-    
-    return img_grads
-    
 def visualize_receptive_field(model, input_shape):
     """
     Visualizes the receptive field of the center pixel in the output of the model.

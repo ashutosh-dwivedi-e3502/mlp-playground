@@ -36,8 +36,8 @@ class MaskedConv(eqx.Module):
         # Initialize the convolution layer
         kernel_height, kernel_width = self.mask.shape
 
-        pad = kernel_height // 2
-        padding=((pad, pad), (pad, pad))
+        pad_h, pad_w = (kernel_height - 1) // 2, (kernel_width - 1) // 2
+        padding=((pad_h, pad_h), (pad_w, pad_w))
 
         self.conv = eqx.nn.Conv2d(
             in_channels=self.in_channels,
