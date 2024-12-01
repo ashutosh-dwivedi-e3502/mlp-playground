@@ -2,6 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from typing import List
 from jaxtyping import Array, Float
 
 
@@ -36,7 +37,7 @@ class MaskedConv(eqx.Module):
         # Initialize the convolution layer
         kernel_height, kernel_width = self.mask.shape
 
-        pad_h, pad_w = (kernel_height - 1) // 2, (kernel_width - 1) // 2
+        pad_h, pad_w = (kernel_height - 1) * dilation // 2, (kernel_width - 1) * dilation // 2
         padding = ((pad_h, pad_h), (pad_w, pad_w))
 
         self.conv = eqx.nn.Conv2d(
@@ -52,8 +53,8 @@ class MaskedConv(eqx.Module):
         self.mask = self.mask.reshape(1, 1, kernel_height, kernel_width)
 
     def __call__(
-        self, x: Float[Array, "batch h w c_in"]
-    ) -> Float[Array, "batch h w c_out"]:
+        self, x: Float[Array, "in_channel height width"]
+    ) -> Float[Array, "out_channel height width"]:
         masked_weights = self.conv.weight * self.mask
         masked_conv = eqx.tree_at(
             where=lambda conv: conv.weight, pytree=self.conv, replace=masked_weights
@@ -61,7 +62,7 @@ class MaskedConv(eqx.Module):
         return masked_conv(x)
 
 
-class VerticalStackConvolution(eqx.Module):
+class VerticalStackConv(eqx.Module):
     conv: MaskedConv
     in_channels: int
     out_channels: int
@@ -101,7 +102,7 @@ class VerticalStackConvolution(eqx.Module):
             key=key,
         )
 
-    def __call__(self, x: Float[Array, "c_in h w"]) -> Float[Array, "c_out h w"]:
+    def __call__(self, x: Float[Array, "in_channel height width"]) -> Float[Array, "out_channel height width"]:
         return self.conv(x)
 
 
@@ -144,34 +145,159 @@ class HorizontalStackConv(eqx.Module):
             dilation=self.dilation,
         )
 
-    def __call__(self, x):
+    def __call__(self, x: Float[Array, "in_channel height width"]) -> Float[Array, "out_channel height width"]:
         return self.conv(x)
 
 
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import jax
-    import jax.numpy as jnp
-    from jax import random
+class GatedMaskedConv(eqx.Module):
+    in_channels: int
 
-    input_shape = (7, 11, 11)
-    key = random.PRNGKey(0)
-    img = jnp.zeros(input_shape, dtype=jnp.float32)
-    vertical_model = VerticalStackConvolution(
-        in_channels=input_shape[0],
-        out_channels=13,
-        kernel_size=7,
-        mask_center=True,
-        key=key,
-    )
-    vertical_model(img)
-    print("vertical worked")
-    horizontal_model = HorizontalStackConv(
-        in_channels=input_shape[0],
-        out_channels=13,
-        kernel_size=7,
-        mask_center=True,
-        key=key,
-    )
-    horizontal_model(img)
+    conv_vertical: VerticalStackConv
+    conv_horizontal: HorizontalStackConv
+    conv_horizontal_1x1: eqx.nn.Conv2d
+    conv_vertical_to_horizontal: eqx.nn.Conv2d
+
+    def __init__(
+        self,
+        key: jax.Array,
+        in_channels: int,
+        dilation: int = 1,
+    ):
+        
+        self.in_channels = in_channels
+
+        vertical_key, horizontal_key, vertical_to_horizontal_key, horizontal_1x1_key = (
+            jax.random.split(key, 4)
+        )
+
+        # Double the number of channels in the output so that later we can split them 
+        # into the value and gate
+        self.conv_vertical = VerticalStackConv(
+            key=vertical_key,
+            in_channels=in_channels,
+            out_channels=2 * in_channels,
+            kernel_size=3,
+            mask_center=False,
+            dilation=dilation,
+        )
+
+        self.conv_horizontal = HorizontalStackConv(
+            key=horizontal_key,
+            in_channels=in_channels,
+            out_channels=2 * in_channels,
+            kernel_size=3,
+            mask_center=False,
+            dilation=dilation,
+        )
+
+        self.conv_vertical_to_horizontal = eqx.nn.Conv2d(
+            key=vertical_to_horizontal_key,
+            in_channels=2 * in_channels,
+            out_channels=2 * in_channels,
+            kernel_size=(1, 1),
+        )
+
+        self.conv_horizontal_1x1 = eqx.nn.Conv2d(
+            key=horizontal_1x1_key,
+            in_channels=in_channels,
+            out_channels=in_channels,
+            kernel_size=(1,1),
+        )
+
+    def __call__(self, v_stack: jax.Array, h_stack: jax.Array):
+        v_val, v_gate = jnp.split(self.conv_vertical(v_stack), 2, axis=0)
+        v_stack_out = jax.nn.tanh(v_val) * jax.nn.sigmoid(v_gate)
+
+        h_stack_features = self.conv_horizontal(h_stack)
+        # Instead of directly passing passing vertical features into horizontal stack,
+        # the 1x1 convolution(self.conv_vertical_to_horizontal) allows for a learnable 
+        # tranformation, also gives compatible dims to be added to h_stack_features
+        h_stack_features += self.conv_vertical_to_horizontal(self.conv_vertical(v_stack))
+        # Split along the channel axis in the array of (channel, height, width)
+        h_val, h_gate = jnp.split(h_stack_features, 2, axis=0)
+
+        # Gated activation
+        h_stack_features = jax.nn.tanh(h_val) + jax.nn.sigmoid(h_gate)
+        # Apply 1x1 convolution to reduce the dimensionality from 2 * in_channels to in_channels
+        # This also allows the h_stack_out to align with the residual connection (h_stack)
+        h_stack_out = self.conv_horizontal_1x1(h_stack_features)
+        h_stack_out += h_stack # Residual connection
+
+        return v_stack_out, h_stack_out
+
+
+class PixelCNN(eqx.Module):
+    in_channels: int
+    hidden_count: int
+
+    vstack_conv: VerticalStackConv
+    hstack_conv: HorizontalStackConv
+    conv_layers: List[GatedMaskedConv]
+    out_conv: eqx.nn.Conv2d
+
+    def __init__(self, key: jax.Array, in_channels: int, hidden_count: int): #TODO change the key type hint to a jaxtyping hint
+        vstack_key, hstack_key, gated_key, out_key = jax.random.split(key, 4)
+        self.in_channels, self.hidden_count = in_channels, hidden_count
+
+        self.vstack_conv = VerticalStackConv(
+            key=vstack_key,
+            in_channels=in_channels,
+            out_channels=hidden_count,
+            kernel_size=3,
+            mask_center=True,
+            dilation=1,
+        )
+
+        self.hstack_conv = HorizontalStackConv(
+            key=hstack_key,
+            in_channels=in_channels,
+            out_channels=hidden_count,
+            kernel_size=3,
+            mask_center=True,
+            dilation=1,
+        )
+
+        g_key1, g_key2, g_key3, g_key4, g_key5, g_key6, g_key7 = jax.random.split(gated_key, 7)        
+
+        self.conv_layers = [
+            GatedMaskedConv(g_key1, in_channels),
+            GatedMaskedConv(g_key2, in_channels, dilation=2),
+            GatedMaskedConv(g_key3, in_channels),
+            GatedMaskedConv(g_key4, in_channels, dilation=4),
+            GatedMaskedConv(g_key5, in_channels),
+            GatedMaskedConv(g_key6, in_channels, dilation=2),
+            GatedMaskedConv(g_key7, hidden_count),
+        ]
+
+        # Convert the learnt features from the previous layers into a probability distribution over possible pixel values.
+        # This is done by applying a 1x1 convolution to the hidden features. This combines the features from all channels.
+        # For each input channel, we output 256 possible values (0-255).
+        self.out_conv = eqx.nn.Conv2d(
+            key=out_key,
+            in_channels=hidden_count,
+            out_channels=in_channels * 256,
+            kernel_size=(1, 1),
+        )
+
+    def get_logits(self, x):
+        v_stack = self.vstack_conv(x)
+        h_stack = self.hstack_conv(x)
+
+        for layer in self.conv_layers:
+            v_stack, h_stack = layer(v_stack, h_stack)
+
+        # elu for smooth gradients of negative inputs
+        return self.out_conv
+
+    def __call__(self, x):
+        # scale input from 0-255 to -1 to 1
+        x = (x.astype(jnp.float32) * 255.0) * 2.0 - 1.0
+        v_stack = self.vstack_conv(x)
+        h_stack = self.hstack_conv(x)
+
+        for layer in self.conv_layers:
+            v_stack, h_stack = layer(v_stack, h_stack)
+
+        # elu for smooth gradients of negative inputs
+        out = self.out_conv(jax.nn.elu(h_stack))
+        return out
