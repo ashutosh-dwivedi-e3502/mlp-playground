@@ -1,16 +1,17 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import optax
 
 from typing import List
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, Scalar, PRNGKeyArray
 
 
 class MaskedConv(eqx.Module):
     """A masked convolution module using Equinox"""
 
     conv: eqx.nn.Conv2d
-    key: jax.Array
+    key: PRNGKeyArray
     in_channels: int
     out_channels: int
     mask: Float[Array, "kernel_h kernel_w"]
@@ -18,7 +19,7 @@ class MaskedConv(eqx.Module):
 
     def __init__(
         self,
-        key: jax.Array,
+        key: PRNGKeyArray,
         in_channels: int,
         out_channels: int,
         mask: Float[Array, "kernel_h kernel_w"],
@@ -72,7 +73,7 @@ class VerticalStackConv(eqx.Module):
 
     def __init__(
         self,
-        key: jax.Array,
+        key: PRNGKeyArray,
         in_channels: int,
         out_channels: int,
         kernel_size: int,
@@ -116,7 +117,7 @@ class HorizontalStackConv(eqx.Module):
 
     def __init__(
         self,
-        key: jax.Array,
+        key: PRNGKeyArray,
         in_channels: int,
         out_channels: int,
         kernel_size: int,
@@ -159,7 +160,7 @@ class GatedMaskedConv(eqx.Module):
 
     def __init__(
         self,
-        key: jax.Array,
+        key: PRNGKeyArray,
         in_channels: int,
         dilation: int = 1,
     ):
@@ -279,19 +280,10 @@ class PixelCNN(eqx.Module):
             kernel_size=(1, 1),
         )
 
-    def get_logits(self, x):
-        v_stack = self.vstack_conv(x)
-        h_stack = self.hstack_conv(x)
-
-        for layer in self.conv_layers:
-            v_stack, h_stack = layer(v_stack, h_stack)
-
-        # elu for smooth gradients of negative inputs
-        return self.out_conv
-
-    def __call__(self, x):
+    def get_logits(self, x: Float[Array, "in_channel height width"]) -> Float[Array, "256 in_channel height width"]:
         # scale input from 0-255 to -1 to 1
         x = (x.astype(jnp.float32) * 255.0) * 2.0 - 1.0
+
         v_stack = self.vstack_conv(x)
         h_stack = self.hstack_conv(x)
 
@@ -301,3 +293,12 @@ class PixelCNN(eqx.Module):
         # elu for smooth gradients of negative inputs
         out = self.out_conv(jax.nn.elu(h_stack))
         return out
+
+    def __call__(self, x: Float[Array, "in_channel height width"]) -> Scalar:
+        logits = self.get_logits(x)
+        labels = x.astype(jnp.int32)
+        # compute negative log likelihood
+        nll = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+        bpd = nll.mean() * jnp.log2(jnp.exp(1))
+        return bpd
+
