@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from typing import List
+from typing import List, Optional, Tuple
 from jaxtyping import Array, Float, Scalar, PRNGKeyArray
 
 
@@ -38,7 +38,9 @@ class MaskedConv(eqx.Module):
         # Initialize the convolution layer
         kernel_height, kernel_width = self.mask.shape
 
-        pad_h, pad_w = (kernel_height - 1) * dilation // 2, (kernel_width - 1) * dilation // 2
+        pad_h, pad_w = (kernel_height - 1) * dilation // 2, (
+            kernel_width - 1
+        ) * dilation // 2
         padding = ((pad_h, pad_h), (pad_w, pad_w))
 
         self.conv = eqx.nn.Conv2d(
@@ -103,7 +105,9 @@ class VerticalStackConv(eqx.Module):
             key=key,
         )
 
-    def __call__(self, x: Float[Array, "in_channel height width"]) -> Float[Array, "out_channel height width"]:
+    def __call__(
+        self, x: Float[Array, "in_channel height width"]
+    ) -> Float[Array, "out_channel height width"]:
         return self.conv(x)
 
 
@@ -146,7 +150,9 @@ class HorizontalStackConv(eqx.Module):
             dilation=self.dilation,
         )
 
-    def __call__(self, x: Float[Array, "in_channel height width"]) -> Float[Array, "out_channel height width"]:
+    def __call__(
+        self, x: Float[Array, "in_channel height width"]
+    ) -> Float[Array, "out_channel height width"]:
         return self.conv(x)
 
 
@@ -164,14 +170,14 @@ class GatedMaskedConv(eqx.Module):
         in_channels: int,
         dilation: int = 1,
     ):
-        
+
         self.in_channels = in_channels
 
         vertical_key, horizontal_key, vertical_to_horizontal_key, horizontal_1x1_key = (
             jax.random.split(key, 4)
         )
 
-        # Double the number of channels in the output so that later we can split them 
+        # Double the number of channels in the output so that later we can split them
         # into the value and gate
         self.conv_vertical = VerticalStackConv(
             key=vertical_key,
@@ -202,7 +208,7 @@ class GatedMaskedConv(eqx.Module):
             key=horizontal_1x1_key,
             in_channels=in_channels,
             out_channels=in_channels,
-            kernel_size=(1,1),
+            kernel_size=(1, 1),
         )
 
     def __call__(self, v_stack: jax.Array, h_stack: jax.Array):
@@ -211,9 +217,11 @@ class GatedMaskedConv(eqx.Module):
 
         h_stack_features = self.conv_horizontal(h_stack)
         # Instead of directly passing passing vertical features into horizontal stack,
-        # the 1x1 convolution(self.conv_vertical_to_horizontal) allows for a learnable 
+        # the 1x1 convolution(self.conv_vertical_to_horizontal) allows for a learnable
         # tranformation, also gives compatible dims to be added to h_stack_features
-        h_stack_features += self.conv_vertical_to_horizontal(self.conv_vertical(v_stack))
+        h_stack_features += self.conv_vertical_to_horizontal(
+            self.conv_vertical(v_stack)
+        )
         # Split along the channel axis in the array of (channel, height, width)
         h_val, h_gate = jnp.split(h_stack_features, 2, axis=0)
 
@@ -222,7 +230,7 @@ class GatedMaskedConv(eqx.Module):
         # Apply 1x1 convolution to reduce the dimensionality from 2 * in_channels to in_channels
         # This also allows the h_stack_out to align with the residual connection (h_stack)
         h_stack_out = self.conv_horizontal_1x1(h_stack_features)
-        h_stack_out += h_stack # Residual connection
+        h_stack_out += h_stack  # Residual connection
 
         return v_stack_out, h_stack_out
 
@@ -236,7 +244,9 @@ class PixelCNN(eqx.Module):
     conv_layers: List[GatedMaskedConv]
     out_conv: eqx.nn.Conv2d
 
-    def __init__(self, key: jax.Array, in_channels: int, hidden_count: int): #TODO change the key type hint to a jaxtyping hint
+    def __init__(
+        self, key: jax.Array, in_channels: int, hidden_count: int
+    ):  # TODO change the key type hint to a jaxtyping hint
         vstack_key, hstack_key, gated_key, out_key = jax.random.split(key, 4)
         self.in_channels, self.hidden_count = in_channels, hidden_count
 
@@ -258,7 +268,9 @@ class PixelCNN(eqx.Module):
             dilation=1,
         )
 
-        g_key1, g_key2, g_key3, g_key4, g_key5, g_key6, g_key7 = jax.random.split(gated_key, 7)        
+        g_key1, g_key2, g_key3, g_key4, g_key5, g_key6, g_key7 = jax.random.split(
+            gated_key, 7
+        )
 
         self.conv_layers = [
             GatedMaskedConv(g_key1, in_channels),
@@ -280,7 +292,9 @@ class PixelCNN(eqx.Module):
             kernel_size=(1, 1),
         )
 
-    def get_logits(self, x: Float[Array, "in_channel height width"]) -> Float[Array, "256 in_channel height width"]:
+    def get_logits(
+        self, x: Float[Array, "channel height width"]
+    ) -> Float[Array, "256 channel height width"]:
         # scale input from 0-255 to -1 to 1
         x = (x.astype(jnp.float32) * 255.0) * 2.0 - 1.0
 
@@ -294,11 +308,43 @@ class PixelCNN(eqx.Module):
         out = self.out_conv(jax.nn.elu(h_stack))
         return out
 
-    def __call__(self, x: Float[Array, "in_channel height width"]) -> Scalar:
+    def __call__(self, x: Float[Array, "channel height width"]) -> Scalar:
         logits = self.get_logits(x)
         labels = x.astype(jnp.int32)
         # compute negative log likelihood
         nll = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+        # we need to transform the densities returned by model (in logit space) back to image space [0-256]
+        # and compute bits per dims
         bpd = nll.mean() * jnp.log2(jnp.exp(1))
         return bpd
 
+    def sample(
+        self,
+        key: PRNGKeyArray,
+        image_shape: Tuple[int, int, int],
+        image: Optional[Float[Array, "channel height width"]] = None,
+    ):
+        image = image if image else jnp.zeros(image_shape, dtype=jnp.int32) - 1
+        get_logits = jax.jit(lambda image: self.get_logits(image))
+
+        def _sample(key, image, c, h, w):
+            logits = get_logits(image)
+            # filter out and get the logits only for the 
+            # c, h, w we want to sample for.
+            logits = logits[:, c, h, w]
+            sampled = jax.random.categorical(key, logits, axis=0)
+            return sampled
+
+        channel, height, width = image_shape        
+        for c in range(channel):
+            for h in range(height):
+                for w in range(width):
+                    key, sampling_key = jax.random.split(key, 2)
+                    sampled = _sample(sampling_key, image, c, h, w)
+                    image = image.at[:, c, h, w].set(sampled)
+        return image
+
+
+
+
+            
