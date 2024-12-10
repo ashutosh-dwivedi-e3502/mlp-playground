@@ -307,25 +307,28 @@ class PixelCNN(eqx.Module):
 
         # elu for smooth gradients of negative inputs
         out = self.out_conv(jax.nn.elu(h_stack))
-        return out
-
-    def __call__(self, x: Float[Array, "channel height width"]) -> Scalar:
-        logits = self.get_logits(x)
-        labels = x.astype(jnp.int32)
-
-        # compute negative log likelihood
         logits = einops.rearrange(
-            logits,
+            out,
             "(in_channels n) w h -> n in_channels w h",
-            in_channels=self.in_channels, n=256,
-        )
+            in_channels=self.in_channels,
+            n=256,
+        )        
+        return logits
 
-        import pdb; pdb.set_trace()
+    def loss(
+        self,
+        logits: Float[Array, "256 channel height width"],
+        labels: Float[Array, "channel height width"],
+    ) -> Scalar:
+        labels = labels.astype(jnp.int32)  # loss function expects this to be integer
         nll = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
         # we need to transform the densities returned by model (in logit space) back to image space [0-256]
         # and compute bits per dims
         bpd = nll.mean() * jnp.log2(jnp.exp(1))
         return bpd
+
+    def __call__(self, x: Float[Array, "channel height width"]) -> Scalar:
+        return self.get_logits(x)
 
     def sample(
         self,
