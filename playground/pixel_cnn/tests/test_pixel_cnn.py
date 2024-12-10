@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import unittest
+import jax
 
 from jax import random
 from pixel_cnn import model
@@ -96,15 +97,16 @@ class TestModel(unittest.TestCase):
     def test_pixel_cnn(self):
         key = random.PRNGKey(0)
 
+        channels = 3
         model_obj = model.PixelCNN(
             key=key,
-            in_channels=1,
+            in_channels=channels,
             hidden_count=10,            
         )
         height, width = 28, 28
-        inp = jnp.zeros((1, height, width), dtype=jnp.float32)
-        output = model_obj.get_logits(inp)
-        assert output.shape == (256, height, width), f"Expected output shape (256, {height=}, {width=}) but got {output.shape}"
+        inp = jnp.zeros((channels, height, width), dtype=jnp.float32)
+        output = model_obj(inp)
+        assert output.shape == (256, channels, height, width), f"Expected output shape (256, {height=}, {width=}) but got {output.shape}"
 
 
 if __name__ == '__main__':

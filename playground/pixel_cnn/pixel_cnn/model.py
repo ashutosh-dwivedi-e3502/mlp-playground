@@ -298,7 +298,7 @@ class PixelCNN(eqx.Module):
     ) -> Float[Array, "256 channel height width"]:
         # scale input from 0-255 to -1 to 1
         x = (x.astype(jnp.float32) * 255.0) * 2.0 - 1.0
-
+        
         v_stack = self.vstack_conv(x)
         h_stack = self.hstack_conv(x)
 
