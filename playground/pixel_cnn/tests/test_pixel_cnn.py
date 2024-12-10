@@ -99,11 +99,11 @@ class TestModel(unittest.TestCase):
         model_obj = model.PixelCNN(
             key=key,
             in_channels=1,
-            hidden_count=1,            
+            hidden_count=10,            
         )
         height, width = 28, 28
         inp = jnp.zeros((1, height, width), dtype=jnp.float32)
-        output = model_obj(inp)
+        output = model_obj.get_logits(inp)
         assert output.shape == (256, height, width), f"Expected output shape (256, {height=}, {width=}) but got {output.shape}"
 
 

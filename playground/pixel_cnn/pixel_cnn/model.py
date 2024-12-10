@@ -2,6 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
+import einops
 
 from typing import List, Optional, Tuple
 from jaxtyping import Array, Float, Scalar, PRNGKeyArray
@@ -273,12 +274,12 @@ class PixelCNN(eqx.Module):
         )
 
         self.conv_layers = [
-            GatedMaskedConv(g_key1, in_channels),
-            GatedMaskedConv(g_key2, in_channels, dilation=2),
-            GatedMaskedConv(g_key3, in_channels),
-            GatedMaskedConv(g_key4, in_channels, dilation=4),
-            GatedMaskedConv(g_key5, in_channels),
-            GatedMaskedConv(g_key6, in_channels, dilation=2),
+            GatedMaskedConv(g_key1, hidden_count),
+            GatedMaskedConv(g_key2, hidden_count, dilation=2),
+            GatedMaskedConv(g_key3, hidden_count),
+            GatedMaskedConv(g_key4, hidden_count, dilation=4),
+            GatedMaskedConv(g_key5, hidden_count),
+            GatedMaskedConv(g_key6, hidden_count, dilation=2),
             GatedMaskedConv(g_key7, hidden_count),
         ]
 
@@ -311,7 +312,15 @@ class PixelCNN(eqx.Module):
     def __call__(self, x: Float[Array, "channel height width"]) -> Scalar:
         logits = self.get_logits(x)
         labels = x.astype(jnp.int32)
+
         # compute negative log likelihood
+        logits = einops.rearrange(
+            logits,
+            "(in_channels n) w h -> n in_channels w h",
+            in_channels=self.in_channels, n=256,
+        )
+
+        import pdb; pdb.set_trace()
         nll = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
         # we need to transform the densities returned by model (in logit space) back to image space [0-256]
         # and compute bits per dims
@@ -329,13 +338,13 @@ class PixelCNN(eqx.Module):
 
         def _sample(key, image, c, h, w):
             logits = get_logits(image)
-            # filter out and get the logits only for the 
+            # filter out and get the logits only for the
             # c, h, w we want to sample for.
             logits = logits[:, c, h, w]
             sampled = jax.random.categorical(key, logits, axis=0)
             return sampled
 
-        channel, height, width = image_shape        
+        channel, height, width = image_shape
         for c in range(channel):
             for h in range(height):
                 for w in range(width):
@@ -343,8 +352,3 @@ class PixelCNN(eqx.Module):
                     sampled = _sample(sampling_key, image, c, h, w)
                     image = image.at[:, c, h, w].set(sampled)
         return image
-
-
-
-
-            
