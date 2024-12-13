@@ -1,8 +1,12 @@
 import matplotlib.pyplot as plt
+import equinox as eqx
 import numpy as np
 import jax
 import jax.numpy as jnp
+import json
+
 from jax import random
+from . import model
 
 
 def plot_receptive_field(img_grads):
@@ -99,3 +103,24 @@ def visualize_receptive_field(model, input_shape):
     """
     img_grads = compute_receptive_field_gradients(model, input_shape)
     plot_receptive_field(img_grads)
+
+
+def save_model(path: str, h_params: dict, model: eqx.Module):
+    with open(path, 'wb') as f:
+        hyperparam_str = json.dumps(h_params)
+        f.write((hyperparam_str + "\n").encode())
+        eqx.tree_serialise_leaves(f, model)
+
+def load_model(path):
+    with open(path, 'rb') as f:
+        h_params = json.loads(f.readline().decode())
+
+        key = jax.random.PRNGKey(42)
+        model.PixelCNN(
+            key = key,
+            **h_params
+        )
+        eqx.tree_deserialise_leaves(f, model)
+    return model
+
+
