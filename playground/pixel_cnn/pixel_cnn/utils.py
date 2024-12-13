@@ -122,5 +122,3 @@ def load_model(path):
         )
         eqx.tree_deserialise_leaves(f, model)
     return model
-
-
