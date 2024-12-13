@@ -9,8 +9,14 @@ def get_dataset() -> DatasetDict:
     # only select images because we don't need labels for this task
     mnist = mnist.with_format(type="jax")
     mnist = mnist.select_columns(column_names=["image"])
-    # make the 28 X 28 image a 1 X 28 X 28 image (add channel dimension)    
-    mnist = mnist.map(lambda x: {"image": jnp.expand_dims(x["image"], axis=0)})
+    # make the 28 X 28 image a 1 X 28 X 28 image (add channel dimension)
+
+    def pre_process(batch_dict):
+        batch = jnp.expand_dims(batch_dict['image'], axis=0)
+        batch = (batch.astype(jnp.float32) / 255.0) * 2.0 - 1.0
+        return {'image': batch}
+   
+    mnist = mnist.map(pre_process)
     print('done loading dataset')
     return mnist
 
