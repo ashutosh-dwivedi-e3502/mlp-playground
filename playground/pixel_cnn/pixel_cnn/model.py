@@ -312,7 +312,7 @@ class PixelCNN(eqx.Module):
             "(in_channels n) w h -> n in_channels w h",
             in_channels=self.in_channels,
             n=256,
-        )        
+        )
         return logits
 
     def loss(

@@ -18,7 +18,7 @@ def run_training(
     hidden_count: int = 64,
     num_epochs: int = 10,
     learning_rate: float = 1e-3,
-    batch_size: int = 8,
+    batch_size: int = 512,
     print_every: int = 10,
 ):
     """Run the PixelCNN training loop.
